@@ -48,13 +48,19 @@
 
   async function makeTargetCanvas(file){
     const img=await loadImage(file);
-    let b=yellowBox(img);
-    if(b){
-      // Le destinataire est généralement dans la moitié supérieure de l'étiquette.
-      b={left:b.left,top:b.top,width:b.width,height:b.height*.58};
+    let b;
+    if((file.name||"").startsWith("tsa-zone-client-")){
+      // La caméra guidée a déjà recadré exactement le rectangle visé par le chauffeur.
+      b={left:0,top:0,width:img.naturalWidth,height:img.naturalHeight};
     }else{
-      // Secours : bande centrale/haute de la photo.
-      b={left:img.naturalWidth*.08,top:img.naturalHeight*.15,width:img.naturalWidth*.84,height:img.naturalHeight*.52};
+      b=yellowBox(img);
+      if(b){
+        // Photo importée : cible la zone destinataire de l'étiquette.
+        b={left:b.left,top:b.top,width:b.width,height:b.height*.58};
+      }else{
+        // Secours pour une photo importée sans étiquette jaune détectable.
+        b={left:img.naturalWidth*.08,top:img.naturalHeight*.15,width:img.naturalWidth*.84,height:img.naturalHeight*.52};
+      }
     }
     const scale=Math.min(3,Math.max(1.8,1800/Math.max(1,b.width)));
     const c=document.createElement("canvas");
