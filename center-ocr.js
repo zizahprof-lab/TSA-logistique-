@@ -2,6 +2,28 @@
 (function(){
   const BAD=/\b(DESTINATAIRE|EXPEDITEUR|EXPÉDITEUR|CARRIER|TRANSPORTEUR|PRIMEVER|PROVENCE|DELIVERY|SHIP TO|LIVRE A|LIVRÉ À|ADRESSE|RUE|AVENUE|ROUTE|CHEMIN|ZONE|ZI|SIRET|TVA|PALETTE|PALLET|CARTON|POIDS|WEIGHT|KG|LOT|QTEE|QTÉE|REFERENCE|REF|SSCC|GTIN|DATE|CODE FOURNISSEUR|DISTRIBUTED BY)\b/i;
 
+  function isBarcodeLike(text, box){
+    const raw=(text||"").toUpperCase().trim();
+    if(!raw)return false;
+    const compact=raw.replace(/\s+/g,"");
+    const digits=(raw.match(/\d/g)||[]).length;
+    const letters=(raw.match(/[A-Z]/g)||[]).length;
+    // Codes-barres/SSCC/GTIN : suites numériques longues ou chaînes alphanumériques compactes.
+    if(/\d{5,}/.test(raw))return true;
+    if(digits>=6)return true;
+    if(compact.length>=10 && !/\s/.test(raw) && digits>=2)return true;
+    if(compact.length>=12 && digits>=3)return true;
+    if((digits/Math.max(1,digits+letters))>.38 && digits>=4)return true;
+    if(/[|¦]{2,}/.test(raw))return true;
+    if(box){
+      const h=Math.max(1,(box.y1||0)-(box.y0||0));
+      const w=Math.max(1,(box.x1||0)-(box.x0||0));
+      // OCR d'un code-barres = bande très large et basse, souvent peu fiable.
+      if(w/h>14 && (box.confidence||0)<65 && digits>=2)return true;
+    }
+    return false;
+  }
+
   function clean(s){
     return (s||"").toUpperCase()
       .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
@@ -82,8 +104,9 @@
   function linesFromBlocks(blocks){
     const out=[];
     (blocks||[]).forEach(b=>(b.paragraphs||[]).forEach(p=>(p.lines||[]).forEach(l=>{
-      const bb=l.bbox||{}, text=clean(l.text);
-      if(!text || text.length<2 || BAD.test(text) || /^\d+$/.test(text) || /\d{5}/.test(text))return;
+      const bb=l.bbox||{}, raw=l.text||"", text=clean(raw);
+      const barcodeBox={x0:bb.x0||0,y0:bb.y0||0,x1:bb.x1||0,y1:bb.y1||0,confidence:l.confidence||0};
+      if(!text || text.length<2 || BAD.test(text) || /^\d+$/.test(text) || isBarcodeLike(raw,barcodeBox))return;
       out.push({text,left:bb.x0||0,top:bb.y0||0,width:(bb.x1||0)-(bb.x0||0),height:(bb.y1||0)-(bb.y0||0),conf:l.confidence||0});
     })));
     return out;
@@ -113,7 +136,7 @@
       const cx=(x.left+x.width/2)/Math.max(1,w);
       return similar && sameArea && cx>.12 && cx<.88 && !BAD.test(x.text);
     }).sort((a,b)=>a.top-b.top).slice(0,3);
-    const picked=(near.length?near:[best]).map(x=>clean(x.text)).filter(Boolean);
+    const picked=(near.length?near:[best]).map(x=>clean(x.text)).filter(x=>x && !isBarcodeLike(x));
     // dédoublonnage et limitation pour éviter le bruit
     const uniq=[]; picked.forEach(s=>{if(!uniq.includes(s))uniq.push(s)});
     let out=uniq.join(" ").replace(/\s+/g," ").trim();
@@ -150,7 +173,7 @@
       let d=choose(lines,canvas.width,canvas.height);
       if(!d){
         const raw=(res.data&&res.data.text)||"";
-        const candidates=raw.split(/\r?\n/).map(clean).filter(s=>s.length>=3 && !BAD.test(s) && !/\d{5}/.test(s));
+        const candidates=raw.split(/\r?\n/).map(x=>({raw:x,clean:clean(x)})).filter(x=>x.clean.length>=3 && !BAD.test(x.clean) && !isBarcodeLike(x.raw)).map(x=>x.clean);
         d=candidates.sort((a,b)=>b.length-a.length)[0]||"";
       }
       $("destination").value=d;
