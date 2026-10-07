@@ -112,36 +112,56 @@
     return out;
   }
 
+  function plausibleLabel(text){
+    const t=clean(text);
+    if(!t || /\d/.test(t))return false; // aucun chiffre accepté
+    const words=t.split(/\s+/).filter(Boolean);
+    if(!words.length || words.length>4)return false;
+    if(words.some(w=>w.length===1))return false;
+    if(t.length<3 || t.length>38)return false;
+
+    const letters=(t.match(/[A-Z]/g)||[]).length;
+    const vowels=(t.match(/[AEIOUY]/g)||[]).length;
+    const vr=vowels/Math.max(1,letters);
+    if(vr<.14 || vr>.72)return false;
+
+    // Rejette les suites typiques générées par les traits de codes-barres.
+    if(/[BCDFGHJKLMNPQRSTVWXZ]{7,}/.test(t.replace(/\s/g,"")))return false;
+    if(/([ILMNRT])\1{2,}/.test(t))return false;
+    return true;
+  }
+
   function choose(lines,w,h){
     if(!lines.length)return"";
+
+    // On ne garde que des lignes alphabétiques plausibles : pas de chiffres, pas de code-barres,
+    // pas de concaténation. Une seule ligne gagnante sera renvoyée.
+    lines=lines.filter(x=>{
+      if(!plausibleLabel(x.text))return false;
+      if((x.conf||0)<38)return false;
+      const cx=(x.left+x.width/2)/Math.max(1,w);
+      const cy=(x.top+x.height/2)/Math.max(1,h);
+      return cx>.12 && cx<.88 && cy>.12 && cy<.88;
+    });
+    if(!lines.length)return"";
+
     const maxH=Math.max(...lines.map(x=>x.height||1));
     lines.forEach(x=>{
       const cx=(x.left+x.width/2)/Math.max(1,w);
       const cy=(x.top+x.height/2)/Math.max(1,h);
-      const centerX=Math.max(0,1-Math.abs(cx-.5)/.5);
-      const upperTarget=Math.max(0,1-Math.abs(cy-.33)/.5);
+      const dx=Math.abs(cx-.5), dy=Math.abs(cy-.5);
+      const center=Math.max(0,1-Math.sqrt(dx*dx+dy*dy)/.62);
       const size=(x.height||1)/maxH;
       const conf=Math.max(0,Math.min(1,(x.conf||0)/100));
-      const letters=(x.text.match(/[A-Z]/g)||[]).length/Math.max(1,x.text.length);
-      x.score=size*.48+centerX*.16+upperTarget*.22+conf*.09+letters*.05;
+      const len=x.text.length;
+      const lengthScore = len>=4 && len<=24 ? 1 : (len<=34 ? .65 : .3);
+
+      // Priorité : grosse police + bonne confiance OCR + proximité du centre.
+      x.score=size*.50 + conf*.28 + center*.17 + lengthScore*.05;
     });
+
     lines.sort((a,b)=>b.score-a.score);
-    const best=lines[0];
-    if(!best)return"";
-    // Récupère les 1 à 3 lignes de même taille juste autour (noms qui passent sur 2/3 lignes).
-    const near=lines.filter(x=>{
-      const similar=(x.height||1)>=Math.max(10,(best.height||1)*.62);
-      const dy=Math.abs((x.top+x.height/2)-(best.top+best.height/2));
-      const sameArea=dy<=Math.max(best.height*2.8,90);
-      const cx=(x.left+x.width/2)/Math.max(1,w);
-      return similar && sameArea && cx>.12 && cx<.88 && !BAD.test(x.text);
-    }).sort((a,b)=>a.top-b.top).slice(0,3);
-    const picked=(near.length?near:[best]).map(x=>clean(x.text)).filter(x=>x && !isBarcodeLike(x));
-    // dédoublonnage et limitation pour éviter le bruit
-    const uniq=[]; picked.forEach(s=>{if(!uniq.includes(s))uniq.push(s)});
-    let out=uniq.join(" ").replace(/\s+/g," ").trim();
-    if(out.length>55)out=clean(best.text);
-    return out;
+    return clean(lines[0].text); // UNE SEULE LIGNE, rien d'autre
   }
 
   runOCR = async function(file){
@@ -173,8 +193,11 @@
       let d=choose(lines,canvas.width,canvas.height);
       if(!d){
         const raw=(res.data&&res.data.text)||"";
-        const candidates=raw.split(/\r?\n/).map(x=>({raw:x,clean:clean(x)})).filter(x=>x.clean.length>=3 && !BAD.test(x.clean) && !isBarcodeLike(x.raw)).map(x=>x.clean);
-        d=candidates.sort((a,b)=>b.length-a.length)[0]||"";
+        const candidates=raw.split(/\r?\n/)
+          .map(x=>({raw:x,clean:clean(x)}))
+          .filter(x=>x.clean.length>=3 && !BAD.test(x.clean) && !isBarcodeLike(x.raw) && plausibleLabel(x.clean));
+        // Secours : une seule ligne plausible, jamais plusieurs lignes assemblées.
+        d=(candidates[0]&&candidates[0].clean)||"";
       }
       $("destination").value=d;
       $("bar").style.width="100%";
