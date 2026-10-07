@@ -7,7 +7,7 @@
   #tsaScanner{position:fixed;inset:0;z-index:9999;background:#000;display:none;overflow:hidden}
   #tsaScanner.on{display:block}
   #tsaScanner video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000}
-  #tsaScanGuide{position:absolute;left:50%;top:46%;transform:translate(-50%,-50%);width:min(86vw,620px);aspect-ratio:4.2/1;border:3px solid #fff;border-radius:14px;box-shadow:0 0 0 9999px rgba(0,0,0,.58);pointer-events:none}
+  #tsaScanGuide{position:absolute;left:50%;top:46%;transform:translate(-50%,-50%);width:min(94vw,700px);aspect-ratio:3.1/1;border:3px solid #fff;border-radius:14px;box-shadow:0 0 0 9999px rgba(0,0,0,.58);pointer-events:none}
   #tsaScanGuide:before,#tsaScanGuide:after{content:"";position:absolute;width:34px;height:34px;border-color:#38d27a;border-style:solid}
   #tsaScanGuide:before{left:-4px;top:-4px;border-width:5px 0 0 5px;border-radius:12px 0 0 0}
   #tsaScanGuide:after{right:-4px;bottom:-4px;border-width:0 5px 5px 0;border-radius:0 0 12px 0}
@@ -16,7 +16,7 @@
   #tsaScanControls{position:absolute;left:0;right:0;bottom:max(20px,env(safe-area-inset-bottom));display:flex;justify-content:center;align-items:center;gap:28px}
   #tsaCapture{width:76px;height:76px;border-radius:50%;border:6px solid rgba(255,255,255,.85);background:#fff;box-shadow:0 3px 14px rgba(0,0,0,.4);padding:0}
   #tsaCancel{background:rgba(0,0,0,.55);color:#fff;border:1px solid rgba(255,255,255,.5);min-width:92px}
-  @media(orientation:landscape){#tsaScanGuide{width:min(68vw,720px);aspect-ratio:5/1;top:47%}}
+  @media(orientation:landscape){#tsaScanGuide{width:min(78vw,780px);aspect-ratio:3.7/1;top:47%}}
   `;
   document.head.appendChild(css);
 
