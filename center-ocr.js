@@ -298,7 +298,7 @@
       const learned=(window.matchKnownClient&&d)?window.matchKnownClient(d):d;
       $("destination").value=learned;
       $("bar").style.width="100%";
-      $("ocrStatus").textContent=learned?(learned!==d?"Client/ville reconnu grâce à l’historique. Vérifie puis valide.":"Ville/client détecté. Vérifie puis valide."):"Aucun nom net détecté. Saisis la ville ou le client.";
+      $("ocrStatus").textContent=learned?(learned!==d?"Client/ville reconnu grâce aux validations précédentes. Vérifie puis valide.":"Ville/client détecté. Vérifie puis valide."):"Aucun nom net détecté. Saisis la ville ou le client.";
     }catch(e){
       $("destination").value="";
       $("ocrStatus").textContent="Lecture automatique impossible. Saisis la ville ou le client.";
