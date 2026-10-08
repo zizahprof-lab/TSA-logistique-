@@ -97,6 +97,23 @@ function rememberOCRCorrection(raw,corrected){
   a.sort((x,y)=>(y.count||0)-(x.count||0)||(y.last||0)-(x.last||0));
   try{localStorage.setItem(ocrAliasKey,JSON.stringify(a.slice(0,300)))}catch(e){}
 }
+function seedOCRTraining(){
+  // Exemples réels validés pendant les essais chauffeur.
+  // Ils servent de base de départ, puis chaque validation ajoute de nouveaux exemples locaux.
+  const seeds=[
+    ["RIM IESARCE","LIDL LES ARCS"],
+    ["LUGIUIO MACUIV","LOGIDIS MACON"],
+    ["PK BAZFGE","LIDL BAZIEGE"],
+    ["MRS DES FEU","LA FRAICHEUR DES FRUITIMAX"],
+    ["TTATRLNELIRLIRLE QUE LLELULEU FLEURY COM","FLEURY"],
+    ["NRINRMIRM LI II IE RU LELULLNEE I 8 BILLY BERC","BILLY BERCLAU"]
+  ];
+  for(const [raw,good] of seeds){
+    rememberClient(good);
+    rememberOCRCorrection(raw,good);
+  }
+}
+seedOCRTraining();
 function editDistance(a,b){
   a=normalizeClient(a);b=normalizeClient(b);
   const m=a.length,n=b.length,d=Array(n+1);for(let j=0;j<=n;j++)d[j]=j;
