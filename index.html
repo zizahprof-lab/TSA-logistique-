@@ -62,8 +62,10 @@ function setTours(x){try{localStorage.setItem(dataKey(),JSON.stringify(x))}catch
 function saveDraft(){if(!currentTour)return;try{localStorage.setItem(draftKey(),JSON.stringify({tour:currentTour,points:currentPoints,loading:$("loadingPlace").value,dest:$("destination").value,whole:$("whole").value,half:$("half").value,destValidated:$("destination").disabled}))}catch(e){}}
 function clearDraft(){try{localStorage.removeItem(draftKey())}catch(e){}}
 const clientMemoryKey="tsa_known_clients_v1";
+const ocrAliasKey="tsa_ocr_aliases_v1";
 function getKnownClients(){try{return JSON.parse(localStorage.getItem(clientMemoryKey)||"[]")}catch(e){return[]}}
-function normalizeClient(s){return (s||"").toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^A-Z ]/g," ").replace(/\s+/g," ").trim()}
+function getOCRAliases(){try{return JSON.parse(localStorage.getItem(ocrAliasKey)||"[]")}catch(e){return[]}}
+function normalizeClient(s){return (s||"").toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^A-Z0-9 ]/g," ").replace(/\s+/g," ").trim()}
 function ocrSkeleton(s){
   return normalizeClient(s)
     .replace(/I/g,"L")
@@ -81,7 +83,19 @@ function rememberClient(s){
   if(i>=0){a[i].count=(a[i].count||1)+1;a[i].last=Date.now();a[i].name=v}
   else a.push({name:v,count:1,last:Date.now()});
   a.sort((x,y)=>(y.count||0)-(x.count||0)||(y.last||0)-(x.last||0));
-  try{localStorage.setItem(clientMemoryKey,JSON.stringify(a.slice(0,100)))}catch(e){}
+  try{localStorage.setItem(clientMemoryKey,JSON.stringify(a.slice(0,150)))}catch(e){}
+}
+function rememberOCRCorrection(raw,corrected){
+  raw=(raw||"").trim();corrected=(corrected||"").trim();
+  if(!raw||!corrected)return;
+  const r=normalizeClient(raw),c=normalizeClient(corrected);
+  if(!r||!c)return;
+  const a=getOCRAliases();
+  const i=a.findIndex(x=>normalizeClient(x.raw)===r && normalizeClient(x.corrected)===c);
+  if(i>=0){a[i].count=(a[i].count||1)+1;a[i].last=Date.now()}
+  else a.push({raw,corrected,count:1,last:Date.now()});
+  a.sort((x,y)=>(y.count||0)-(x.count||0)||(y.last||0)-(x.last||0));
+  try{localStorage.setItem(ocrAliasKey,JSON.stringify(a.slice(0,300)))}catch(e){}
 }
 function editDistance(a,b){
   a=normalizeClient(a);b=normalizeClient(b);
@@ -89,23 +103,40 @@ function editDistance(a,b){
   for(let i=1;i<=m;i++){let prev=d[0];d[0]=i;for(let j=1;j<=n;j++){const old=d[j];d[j]=Math.min(d[j]+1,d[j-1]+1,prev+(a[i-1]===b[j-1]?0:1));prev=old}}
   return d[n];
 }
+function similarity(a,b){
+  a=normalizeClient(a);b=normalizeClient(b);
+  if(!a||!b)return 0;
+  const d=editDistance(a,b);
+  return 1-d/Math.max(a.length,b.length);
+}
 window.matchKnownClient=function(raw){
   const r=normalizeClient(raw);if(r.length<3)return raw||"";
   const rs=ocrSkeleton(r);
+
+  // 1) Apprentissage direct : une mauvaise lecture déjà corrigée par le chauffeur
+  // devient un exemple d'entraînement local pour les scans suivants.
+  let aliasBest=null,aliasScore=0;
+  for(const a of getOCRAliases()){
+    const ar=normalizeClient(a.raw), ars=ocrSkeleton(ar);
+    const s1=similarity(r,ar), s2=similarity(rs,ars);
+    const freq=Math.min(.08,((a.count||1)-1)*.015);
+    const score=Math.max(s1,s2*.98)+freq;
+    if(score>aliasScore){aliasScore=score;aliasBest=a}
+  }
+  if(aliasBest&&aliasScore>=0.72)return aliasBest.corrected;
+
+  // 2) Dictionnaire des clients/villes déjà validés.
   const list=getKnownClients();let best=null,bestScore=0;
   for(const x of list){
     const n=normalizeClient(x.name);if(!n)continue;
     const ns=ocrSkeleton(n);
-    const dist=editDistance(r,n),sim=1-dist/Math.max(r.length,n.length);
-    const sdist=editDistance(rs,ns),ssim=1-sdist/Math.max(rs.length,ns.length);
-    const sameWords=Math.min(r.split(" ").length,n.split(" ").length)>=1 ? 0.02 : 0;
+    const sim=similarity(r,n),ssim=similarity(rs,ns);
     const contains=(r.includes(n)||n.includes(r)||rs.includes(ns)||ns.includes(rs))?0.10:0;
-    const freq=Math.min(.07,((x.count||1)-1)*.012);
-    const score=Math.max(sim,ssim*.97)+contains+freq+sameWords;
+    const freq=Math.min(.08,((x.count||1)-1)*.014);
+    const score=Math.max(sim,ssim*.97)+contains+freq;
     if(score>bestScore){bestScore=score;best=x}
   }
-  // Après plusieurs validations, on peut corriger une lecture OCR assez dégradée.
-  return best&&bestScore>=0.66?best.name:(raw||"");
+  return best&&bestScore>=0.65?best.name:(raw||"");
 };
 function ord(n){return n===1?"1er tour":n+"e tour"}let currentTour=null,currentPoints=[];
 document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));document.querySelectorAll(".page").forEach(x=>x.classList.remove("active"));b.classList.add("active");$(b.dataset.page).classList.add("active");if(b.dataset.page==="syntheses")render()});
@@ -271,7 +302,7 @@ $("photo").onchange=async e=>{
   await runOCR(f);
 };
 $("retryOCR").onclick=()=>{const f=$("photo").files&&$("photo").files[0];if(f)runOCR(f)};
-$("validDest").onclick=()=>{if(!$("destination").value.trim()){alert("Ville ou client obligatoire.");return}rememberClient($("destination").value.trim());$("destination").disabled=true;$("validDest").disabled=true;$("destMsg").innerHTML='<span class="badge">✓ Validé et mémorisé</span><div class="muted" style="margin-top:5px">Ce nom aidera les prochains scans.</div>';$("whole").disabled=false;$("half").disabled=false;$("addPoint").disabled=false;$("palStep").style.opacity="1";$("whole").focus();saveDraft()};
+$("validDest").onclick=()=>{if(!$("destination").value.trim()){alert("Ville ou client obligatoire.");return}const corrected=$("destination").value.trim();rememberClient(corrected);rememberOCRCorrection(window.lastRawOCR||"",corrected);$("destination").disabled=true;$("validDest").disabled=true;$("destMsg").innerHTML='<span class="badge">✓ Validé et appris</span><div class="muted" style="margin-top:5px">L’application mémorise aussi la mauvaise lecture OCR pour mieux reconnaître ce type d’écriture la prochaine fois.</div>';$("whole").disabled=false;$("half").disabled=false;$("addPoint").disabled=false;$("palStep").style.opacity="1";$("whole").focus();saveDraft()};
 $("addPoint").onclick=()=>{const l=$("loadingPlace").value.trim(),d=$("destination").value.trim(),w=parseInt($("whole").value||"0"),h=parseInt($("half").value||"0");if(!l||!d||w+h<=0){alert("Vérifie le lieu, la destination et les palettes.");return}currentPoints.push({loading:l,dest:d,whole:w,half:h});$("countBadge").textContent=currentPoints.length+" pointage"+(currentPoints.length>1?"s":"");$("saveMsg").innerHTML='<span class="badge">✓ Ajouté au tour</span>';saveDraft();setTimeout(()=>resetPoint(true),350)};
 function resetPoint(keep){const l=keep?$("loadingPlace").value:"";$("loadingPlace").value=l;$("destination").value="";$("whole").value="";$("half").value="";$("photo").value="";$("preview").style.display="none";$("bar").style.width="0";$("ocrStatus").textContent="Prêt pour une nouvelle photo.";$("destMsg").textContent="";$("saveMsg").textContent="";$("destination").disabled=true;$("validDest").disabled=true;$("whole").disabled=true;$("half").disabled=true;$("addPoint").disabled=true;$("destStep").style.opacity=".55";$("palStep").style.opacity=".55";saveDraft()}
 function qtyText(e,h){const q=[];if(e>0)q.push(e+" entière(s)");if(h>0)q.push(h+" demi-palette(s)");return q.join(" - ")}
