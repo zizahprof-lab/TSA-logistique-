@@ -72,8 +72,14 @@
     const img=await loadImage(file);
     let b;
     if((file.name||"").startsWith("tsa-zone-client-")){
-      // La caméra guidée a déjà recadré exactement le rectangle visé par le chauffeur.
-      b={left:0,top:0,width:img.naturalWidth,height:img.naturalHeight};
+      // Le rectangle caméra reste large pour le chauffeur, mais l'OCR ne lit que sa bande centrale.
+      // Cela élimine les codes-barres et petits textes périphériques en haut/bas.
+      b={
+        left:img.naturalWidth*.04,
+        top:img.naturalHeight*.20,
+        width:img.naturalWidth*.92,
+        height:img.naturalHeight*.60
+      };
     }else{
       b=yellowBox(img);
       if(b){
@@ -183,20 +189,30 @@
           $("ocrStatus").textContent="Lecture ciblée : "+p+" %";
         }
       }});
+      const guided=(file.name||"").startsWith("tsa-zone-client-");
       await worker.setParameters({
-        tessedit_pageseg_mode:Tesseract.PSM.SPARSE_TEXT,
+        tessedit_pageseg_mode:guided?Tesseract.PSM.SINGLE_LINE:Tesseract.PSM.SPARSE_TEXT,
         preserve_interword_spaces:"1",
-        user_defined_dpi:"300"
+        user_defined_dpi:"300",
+        tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZÀÂÄÇÉÈÊËÎÏÔÖÙÛÜŸŒÆ '-&"
       });
       const res=await worker.recognize(canvas,{}, {text:true,blocks:true,tsv:true});
-      let lines=linesFromBlocks(res.data&&res.data.blocks);
-      let d=choose(lines,canvas.width,canvas.height);
+      let d="";
+      if(guided){
+        // Dans le scanner guidé, le chauffeur a déjà placé UNE seule ligne dans le cadre.
+        // On prend donc directement cette ligne, sans concaténer d'autres zones.
+        const one=clean((res.data&&res.data.text)||"");
+        if(plausibleLabel(one) && !isBarcodeLike(one)) d=one;
+      }
+      if(!d){
+        let lines=linesFromBlocks(res.data&&res.data.blocks);
+        d=choose(lines,canvas.width,canvas.height);
+      }
       if(!d){
         const raw=(res.data&&res.data.text)||"";
         const candidates=raw.split(/\r?\n/)
           .map(x=>({raw:x,clean:clean(x)}))
           .filter(x=>x.clean.length>=3 && !BAD.test(x.clean) && !isBarcodeLike(x.raw) && plausibleLabel(x.clean));
-        // Secours : une seule ligne plausible, jamais plusieurs lignes assemblées.
         d=(candidates[0]&&candidates[0].clean)||"";
       }
       const learned=(window.matchKnownClient&&d)?window.matchKnownClient(d):d;
