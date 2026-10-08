@@ -175,6 +175,17 @@
 
   function makeOCRVariants(base){
     const vars=[base];
+
+    // Variante étirée horizontalement : les polices très hautes et étroites
+    // (ex. LOGIDIS MACON, LIDL LES ARCS) sont beaucoup mieux reconnues ainsi.
+    for(const factor of [1.35,1.65]){
+      const st=document.createElement("canvas");
+      st.width=Math.round(base.width*factor);st.height=base.height;
+      const sx=st.getContext("2d");
+      sx.imageSmoothingEnabled=true;
+      sx.drawImage(base,0,0,st.width,st.height);
+      vars.push(st);
+    }
     // Variante noir/blanc : très utile sur les grandes lettres imprimées et condensées.
     const b=document.createElement("canvas");
     b.width=base.width;b.height=base.height;
@@ -245,17 +256,31 @@
       if(guided){
         const variants=makeOCRVariants(canvas);
         let best={text:"",score:-1};
-        for(let i=0;i<variants.length;i++){
-          const res=await worker.recognize(variants[i],{}, {text:true,blocks:true,tsv:true});
-          const raw=((res.data&&res.data.text)||"").trim();
-          const one=clean(raw);
-          let conf=0;
-          const blocks=(res.data&&res.data.blocks)||[];
-          const confs=[];
-          blocks.forEach(b=>(b.paragraphs||[]).forEach(p=>(p.lines||[]).forEach(l=>{if(l.confidence!=null)confs.push(l.confidence)})));
-          if(confs.length)conf=confs.reduce((a,b)=>a+b,0)/confs.length;
-          const sc=scoreOCRCandidate(one,conf);
-          if(sc>best.score)best={text:one,score:sc};
+        const modes=[Tesseract.PSM.SINGLE_LINE,Tesseract.PSM.RAW_LINE||Tesseract.PSM.SINGLE_LINE];
+        for(const mode of modes){
+          await worker.setParameters({
+            tessedit_pageseg_mode:mode,
+            preserve_interword_spaces:"1",
+            user_defined_dpi:"300",
+            tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZÀÂÄÇÉÈÊËÎÏÔÖÙÛÜŸŒÆ '-&"
+          });
+          for(let i=0;i<variants.length;i++){
+            const res=await worker.recognize(variants[i],{}, {text:true,blocks:true,tsv:true});
+            const raw=((res.data&&res.data.text)||"").trim();
+            const one=clean(raw);
+            let conf=0;
+            const blocks=(res.data&&res.data.blocks)||[];
+            const confs=[];
+            blocks.forEach(b=>(b.paragraphs||[]).forEach(p=>(p.lines||[]).forEach(l=>{if(l.confidence!=null)confs.push(l.confidence)})));
+            if(confs.length)conf=confs.reduce((a,b)=>a+b,0)/confs.length;
+            let sc=scoreOCRCandidate(one,conf);
+
+            // Bonus aux lectures qui ressemblent à un vrai nom composé (1 à 3 mots lisibles).
+            const words=one.split(/\s+/).filter(Boolean);
+            if(words.length>=1&&words.length<=3&&words.every(w=>w.length>=3))sc+=.05;
+
+            if(sc>best.score)best={text:one,score:sc};
+          }
         }
         if(best.score>=.30)d=best.text;
       }else{
