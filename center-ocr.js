@@ -96,11 +96,14 @@
     c.height=Math.max(1,Math.round(b.height*scale));
     const x=c.getContext("2d",{willReadFrequently:true});
     x.drawImage(img,b.left,b.top,b.width,b.height,0,0,c.width,c.height);
+    const guided=(file.name||"").startsWith("tsa-zone-client-");
     const im=x.getImageData(0,0,c.width,c.height),p=im.data;
     for(let i=0;i<p.length;i+=4){
       const g=.299*p[i]+.587*p[i+1]+.114*p[i+2];
-      // contraste doux, plus robuste aux étiquettes jaunes et ombres
-      let v=(g-128)*1.65+128; v=Math.max(0,Math.min(255,v));
+      // Scanner guidé : gris naturel pour ne pas déformer les lettres hautes/étroites.
+      // Photo importée : contraste un peu renforcé.
+      let v=guided?g:((g-128)*1.45+128);
+      v=Math.max(0,Math.min(255,v));
       p[i]=p[i+1]=p[i+2]=v;
     }
     x.putImageData(im,0,0);
@@ -170,6 +173,48 @@
     return clean(lines[0].text); // UNE SEULE LIGNE, rien d'autre
   }
 
+  function makeOCRVariants(base){
+    const vars=[base];
+    // Variante noir/blanc : très utile sur les grandes lettres imprimées et condensées.
+    const b=document.createElement("canvas");
+    b.width=base.width;b.height=base.height;
+    const bx=b.getContext("2d",{willReadFrequently:true});
+    bx.drawImage(base,0,0);
+    const im=bx.getImageData(0,0,b.width,b.height),p=im.data;
+    let sum=0,n=0;
+    for(let i=0;i<p.length;i+=16){sum+=p[i];n++}
+    const mean=sum/Math.max(1,n);
+    const th=Math.max(105,Math.min(190,mean*.90));
+    for(let i=0;i<p.length;i+=4){
+      const v=p[i]<th?0:255;
+      p[i]=p[i+1]=p[i+2]=v;
+    }
+    bx.putImageData(im,0,0);vars.push(b);
+
+    // Variante contraste modéré.
+    const c=document.createElement("canvas");
+    c.width=base.width;c.height=base.height;
+    const cx=c.getContext("2d",{willReadFrequently:true});
+    cx.drawImage(base,0,0);
+    const im2=cx.getImageData(0,0,c.width,c.height),q=im2.data;
+    for(let i=0;i<q.length;i+=4){
+      let v=(q[i]-128)*1.35+128;v=Math.max(0,Math.min(255,v));
+      q[i]=q[i+1]=q[i+2]=v;
+    }
+    cx.putImageData(im2,0,0);vars.push(c);
+    return vars;
+  }
+
+  function scoreOCRCandidate(text,conf){
+    const t=clean(text);
+    if(!plausibleLabel(t)||isBarcodeLike(t))return -1;
+    const letters=(t.match(/[A-Z]/g)||[]).length;
+    const words=t.split(/\s+/).filter(Boolean).length;
+    const lengthScore=(t.length>=5&&t.length<=28)?1:.65;
+    const wordScore=(words>=1&&words<=4)?1:.5;
+    return Math.max(0,Math.min(1,(conf||0)/100))*.72 + lengthScore*.18 + wordScore*.10 + Math.min(.03,letters/500);
+  }
+
   runOCR = async function(file){
     enableDest("");
     if(typeof Tesseract==="undefined"){
@@ -196,24 +241,34 @@
         user_defined_dpi:"300",
         tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZÀÂÄÇÉÈÊËÎÏÔÖÙÛÜŸŒÆ '-&"
       });
-      const res=await worker.recognize(canvas,{}, {text:true,blocks:true,tsv:true});
       let d="";
       if(guided){
-        // Dans le scanner guidé, le chauffeur a déjà placé UNE seule ligne dans le cadre.
-        // On prend donc directement cette ligne, sans concaténer d'autres zones.
-        const one=clean((res.data&&res.data.text)||"");
-        if(plausibleLabel(one) && !isBarcodeLike(one)) d=one;
-      }
-      if(!d){
+        const variants=makeOCRVariants(canvas);
+        let best={text:"",score:-1};
+        for(let i=0;i<variants.length;i++){
+          const res=await worker.recognize(variants[i],{}, {text:true,blocks:true,tsv:true});
+          const raw=((res.data&&res.data.text)||"").trim();
+          const one=clean(raw);
+          let conf=0;
+          const blocks=(res.data&&res.data.blocks)||[];
+          const confs=[];
+          blocks.forEach(b=>(b.paragraphs||[]).forEach(p=>(p.lines||[]).forEach(l=>{if(l.confidence!=null)confs.push(l.confidence)})));
+          if(confs.length)conf=confs.reduce((a,b)=>a+b,0)/confs.length;
+          const sc=scoreOCRCandidate(one,conf);
+          if(sc>best.score)best={text:one,score:sc};
+        }
+        if(best.score>=.30)d=best.text;
+      }else{
+        const res=await worker.recognize(canvas,{}, {text:true,blocks:true,tsv:true});
         let lines=linesFromBlocks(res.data&&res.data.blocks);
         d=choose(lines,canvas.width,canvas.height);
-      }
-      if(!d){
-        const raw=(res.data&&res.data.text)||"";
-        const candidates=raw.split(/\r?\n/)
-          .map(x=>({raw:x,clean:clean(x)}))
-          .filter(x=>x.clean.length>=3 && !BAD.test(x.clean) && !isBarcodeLike(x.raw) && plausibleLabel(x.clean));
-        d=(candidates[0]&&candidates[0].clean)||"";
+        if(!d){
+          const raw=(res.data&&res.data.text)||"";
+          const candidates=raw.split(/\r?\n/)
+            .map(x=>({raw:x,clean:clean(x)}))
+            .filter(x=>x.clean.length>=3 && !BAD.test(x.clean) && !isBarcodeLike(x.raw) && plausibleLabel(x.clean));
+          d=(candidates[0]&&candidates[0].clean)||"";
+        }
       }
       const learned=(window.matchKnownClient&&d)?window.matchKnownClient(d):d;
       $("destination").value=learned;
